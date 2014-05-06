@@ -40,12 +40,10 @@ func (t *proxyTransport) RoundTrip(request *http.Request) (*http.Response, error
 	response, err := http.DefaultTransport.RoundTrip(request)
 
 	if response.Header.Get("Content-Type") != "audio/mpeg" {
-		body, err := httputil.DumpResponse(response, true)
-		if err != nil {
-			return nil, err
-		}
+		body := new(bytes.Buffer)
+		body.ReadFrom(response.Body)
 
-		bod := strings.Replace(string(body), request.Host, request.Header.Get("X-Proxy-Host"), -1)
+		bod := strings.Replace(body.String(), request.Host, request.Header.Get("X-Proxy-Host"), -1)
 		buf := bytes.NewBufferString(bod)
 		contentLength := strconv.Itoa(buf.Len())
 
