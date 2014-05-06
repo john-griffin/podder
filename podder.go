@@ -1,89 +1,57 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/http/cookiejar"
+	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
-func OriginalFeedBody() string {
-	res, err := http.Get(os.Getenv("FEED_URL"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	body, err := ioutil.ReadAll(res.Body)
-	res.Body.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return string(body)
-}
-
-func UpdateFileUrls(body string, newHost string) string {
-	return strings.Replace(body, os.Getenv("REPLACE_URL"), newHost, -1)
-}
-
-func Feed(w http.ResponseWriter, r *http.Request) {
-	updatedBody := UpdateFileUrls(OriginalFeedBody(), r.Host)
-	w.Header().Set("Content-Type", "application/rss+xml")
-	fmt.Fprint(w, updatedBody)
-}
-
-func File(w http.ResponseWriter, r *http.Request) {
-	cookieJar, err := cookiejar.New(nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	client := &http.Client{
-		CheckRedirect: nil,
-		Jar:           cookieJar,
-	}
-
-	fileUrl := fmt.Sprintf("%s/%s", os.Getenv("FILE_URL"), r.URL.Path[1:])
-	v := url.Values{}
-	v.Set("amember_login", os.Getenv("USER"))
-	v.Set("amember_pass", os.Getenv("PASS"))
-	client.PostForm(os.Getenv("LOGIN_URL"), v)
-
-	fileRequest, err := http.NewRequest("GET", fileUrl, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	audioRes, err := client.Do(fileRequest)
-	if err != nil {
-		log.Fatal(err)
-	}
-	reader := bufio.NewReader(audioRes.Body)
-	w.Header().Set("Content-Length", audioRes.Header.Get("Content-Length"))
-	w.Header().Set("Accept-Ranges", audioRes.Header.Get("Accept-Ranges"))
-	w.Header().Set("Content-Type", audioRes.Header.Get("Content-Type"))
-	for {
-		line, err := reader.ReadBytes('\n')
-		w.Write(line)
-		if err != nil {
-			break
-		}
-	}
-	audioRes.Body.Close()
-}
-
-func Log(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL)
-		handler.ServeHTTP(w, r)
-	})
-}
-
 func main() {
-	http.HandleFunc("/feed.xml", Feed)
-	http.HandleFunc("/", File)
 	port := fmt.Sprintf(":%s", os.Getenv("PORT"))
 	log.Printf("Starting on port %s ....", port)
-	http.ListenAndServe(port, Log(http.DefaultServeMux))
+	http.ListenAndServe(port, proxy())
+}
+
+func proxy() *httputil.ReverseProxy {
+	proxyUrl, _ := url.Parse(os.Getenv("PROXY_URL"))
+	proxy := httputil.NewSingleHostReverseProxy(proxyUrl)
+	director := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		req.Header.Set("X-Proxy-Host", req.Host)
+		req.Host = proxyUrl.Host
+		req.SetBasicAuth(os.Getenv("USER"), os.Getenv("PASS"))
+		director(req)
+		log.Printf("%s -> %s", req.RequestURI, req.URL)
+	}
+	proxy.Transport = &proxyTransport{}
+	return proxy
+}
+
+type proxyTransport struct{}
+
+func (t *proxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := http.DefaultTransport.RoundTrip(request)
+
+	if response.Header.Get("Content-Type") != "audio/mpeg" {
+		body, err := httputil.DumpResponse(response, true)
+		if err != nil {
+			return nil, err
+		}
+
+		bod := strings.Replace(string(body), request.Host, request.Header.Get("X-Proxy-Host"), -1)
+		buf := bytes.NewBufferString(bod)
+		contentLength := strconv.Itoa(buf.Len())
+
+		response.Body = ioutil.NopCloser(buf)
+		response.Header.Set("Content-Length", contentLength)
+	}
+
+	return response, err
 }
