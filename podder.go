@@ -44,6 +44,8 @@ func (t *proxyTransport) RoundTrip(request *http.Request) (*http.Response, error
 		body := new(bytes.Buffer)
 		body.ReadFrom(response.Body)
 
+		log.Printf("%+v", request.Header)
+
 		bod := strings.Replace(body.String(), request.Host, request.Header.Get("X-Proxy-Host"), -1)
 		buf := bytes.NewBufferString(bod)
 		contentLength := strconv.Itoa(buf.Len())
