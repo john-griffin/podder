@@ -24,7 +24,6 @@ func proxy() *httputil.ReverseProxy {
 	proxy := httputil.NewSingleHostReverseProxy(proxyUrl)
 	director := proxy.Director
 	proxy.Director = func(req *http.Request) {
-		log.Printf("%+v", req)
 		req.Header.Set("X-Proxy-Host", req.Host)
 		req.Host = proxyUrl.Host
 		req.SetBasicAuth(os.Getenv("USER"), os.Getenv("PASS"))
