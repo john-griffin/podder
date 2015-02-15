@@ -29,7 +29,6 @@ func proxy() *httputil.ReverseProxy {
 		req.Host = proxyUrl.Host
 		req.SetBasicAuth(os.Getenv("USER"), os.Getenv("PASS"))
 		director(req)
-		log.Printf("%s -> %s", req.RequestURI, req.URL)
 	}
 	proxy.Transport = &proxyTransport{}
 	return proxy
@@ -44,9 +43,16 @@ func (t *proxyTransport) RoundTrip(request *http.Request) (*http.Response, error
 		body := new(bytes.Buffer)
 		body.ReadFrom(response.Body)
 
-		log.Printf("%+v", request.Header)
+		target := request.Host
+		replacement := request.Header.Get("X-Proxy-Host")
+		proto := request.Header.Get("X-Forwarded-Proto")
 
-		bod := strings.Replace(body.String(), request.Host, request.Header.Get("X-Proxy-Host"), -1)
+		if len(proto) > 0 {
+			target = "http://" + target
+			replacement = proto + "://" + replacement
+		}
+
+		bod := strings.Replace(body.String(), target, replacement, -1)
 		buf := bytes.NewBufferString(bod)
 		contentLength := strconv.Itoa(buf.Len())
 
